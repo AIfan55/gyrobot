@@ -1,97 +1,77 @@
-// server.js
+// server.js (Firebase-Free Swarm Auth Backend)
 const express = require('express');
 const cors = require('cors');
-const admin = require('firebase-admin');
-require('dotenv').config();
 
 const app = express();
 app.use(express.json());
+app.use(cors()); // Allows your Vercel frontend to communicate freely
 
-// Enable CORS explicitly for your Vercel deployment domain
-app.use(cors({
-    origin: process.env.VERCEL_FRONTEND_URL || '*',
-    methods: ['GET', 'POST', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization']
-}));
-
-// Reconstruct Private Key string to properly escape newlines in production environments
-const privateKey = process.env.FIREBASE_PRIVATE_KEY 
-    ? process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, '\n') 
-    : undefined;
-
-// Safety Guardrail validation for deployment setup
-if (!process.env.FIREBASE_PROJECT_ID || !privateKey || !process.env.FIREBASE_CLIENT_EMAIL) {
-    console.error("CRITICAL CONFIGURATION ERROR: Environment values missing inside runtime layer.");
-    process.exit(1);
+// 1. HARDCODED SWARM MAPPING LOGIC (1 to 50)
+// Automated allocation: Group 1 (Ch 1), Group 2 (Ch 6), Group 3 (Ch 11)
+const robotSwarmRegistry = {};
+for (let i = 1; i <= 50; i++) {
+    // Cycles groups: 1, 2, 3, 1, 2, 3...
+    const group = ((i - 1) % 3) + 1; 
+    const channel = group === 1 ? 1 : (group === 2 ? 6 : 11);
+    
+    robotSwarmRegistry[`robot_${i}`] = { group, channel };
 }
 
-// Initialize secure Firebase Admin Operations Interface
-admin.initializeApp({
-    credential: admin.credential.cert({
-        projectId: process.env.FIREBASE_PROJECT_ID,
-        clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
-        privateKey: privateKey
-    }),
-    databaseURL: process.env.FIREBASE_DATABASE_URL
+// 2. GENERATE OPERATOR USERNAMES & PASSWORDS (operator01 to operator50)
+const operatorRegistry = {};
+for (let i = 1; i <= 50; i++) {
+    const paddedId = String(i).padStart(2, '0');
+    const username = `operator${paddedId}@swarm.local`;
+    const password = `SwarmPass2026_${paddedId}`; // Unique per operator
+    
+    operatorRegistry[username] = password;
+}
+
+/**
+ * Endpoint A: Simple Driver Login Validation
+ */
+app.post('/api/auth/login', (req, res) => {
+    const { email, password } = req.body;
+    
+    if (operatorRegistry[email] && operatorRegistry[email] === password) {
+        // Return a simple mock session token string
+        return res.status(200).json({ 
+            success: true, 
+            token: `mock-session-token-operator-${email}` 
+        });
+    }
+    
+    return res.status(401).json({ error: 'Invalid operator credentials.' });
 });
 
-const db = admin.database();
-
 /**
- * Security Middleware: Asserts incoming client headers carry valid Firebase JSON tokens
+ * Endpoint B: Swarm Target Profile Routing
  */
-async function verifySessionToken(req, res, next) {
+app.post('/api/swarm/route-robot', (req, res) => {
     const authHeader = req.headers.authorization;
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
-        return res.status(401).json({ error: 'Unauthorized: Missing session token prefix.' });
+        return res.status(401).json({ error: 'Unauthorized session.' });
     }
 
-    const token = authHeader.split('Bearer ')[1];
-    try {
-        const decodedToken = await admin.auth().verifyIdToken(token);
-        req.operator = decodedToken;
-        next();
-    } catch (err) {
-        return res.status(403).json({ error: 'Forbidden: Session key signature invalid.' });
-    }
-}
-
-/**
- * Core Dynamic Target Routing Endpoint
- */
-app.post('/api/swarm/route-robot', verifySessionToken, async (req, res) => {
     const { robotId } = req.body;
     const parsedId = parseInt(robotId);
 
     if (!parsedId || parsedId < 1 || parsedId > 50) {
-        return res.status(400).json({ error: 'Validation Error: Target out of range parameters.' });
+        return res.status(400).json({ error: 'Robot ID out of bounds (1-50).' });
     }
 
-    try {
-        // Interrogate database reference nodes for targeted routing data
-        const snapshot = await db.ref(`robots/robot_${parsedId}`).once('value');
-        
-        if (!snapshot.exists()) {
-            return res.status(404).json({ error: `Swarm target record for ID #${parsedId} missing.` });
-        }
-
-        const configurationManifest = snapshot.val();
-        console.log(`[ROUTE SUCCESS] Operator: ${req.operator.email} mapped to Target Robot #${parsedId}`);
-
-        return res.status(200).json({
-            robotId: parsedId,
-            group: configurationManifest.group,
-            channel: configurationManifest.channel
-        });
-
-    } catch (dbError) {
-        console.error('Database query structural exception:', dbError);
-        return res.status(500).json({ error: 'Internal failure resolving target path configuration.' });
+    const botData = robotSwarmRegistry[`robot_${parsedId}`];
+    if (!botData) {
+        return res.status(404).json({ error: 'Robot profile not found.' });
     }
+
+    console.log(`[ROUTE MATCHED] Dispatched profile config for Robot #${parsedId}`);
+    return res.status(200).json({
+        robotId: parsedId,
+        group: botData.group,
+        channel: botData.channel
+    });
 });
 
-// Port binding fallback rules for cloud container wrappers
 const PORT = process.env.PORT || 10000;
-app.listen(PORT, () => {
-    console.log(`Swarm Core Security Microservice active on port ${PORT}`);
-});
+app.listen(PORT, () => console.log(`Standalone Auth Engine live on port ${PORT}`));
