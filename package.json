@@ -1,0 +1,13 @@
+{
+  "name": "swarm-auth-backend",
+  "version": "1.0.0",
+  "description": "Swarm robot authentication backend engine",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.19.2"
+  }
+}
