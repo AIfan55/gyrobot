@@ -1,0 +1,367 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Swarm Control Deck - Proxy Auth Mode</title>
+    <style>
+        :root {
+            --bg-color: #0d1117;
+            --accent-color: #58a6ff;
+            --danger-color: #ff7b72;
+            --success-color: #3fb950;
+            --card-bg: #161b22;
+        }
+        body {
+            margin: 0;
+            padding: 20px;
+            background-color: var(--bg-color);
+            color: #c9d1d9;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            text-align: center;
+            overflow: hidden;
+            user-select: none;
+        }
+        .container {
+            max-width: 500px;
+            margin: 0 auto;
+        }
+        h1 {
+            font-size: 1.5rem;
+            color: #ffffff;
+            margin-bottom: 5px;
+        }
+        .status-card {
+            background-color: var(--card-bg);
+            border: 1px solid #30363d;
+            border-radius: 8px;
+            padding: 15px;
+            margin: 15px 0;
+        }
+        .input-group {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            margin-bottom: 15px;
+        }
+        .row-group {
+            display: flex;
+            gap: 10px;
+        }
+        input {
+            background: #21262d;
+            border: 1px solid #30363d;
+            border-radius: 6px;
+            color: #fff;
+            padding: 12px;
+            font-size: 1rem;
+            text-align: center;
+        }
+        button {
+            background-color: var(--accent-color);
+            color: #0d1117;
+            border: none;
+            border-radius: 6px;
+            padding: 12px 20px;
+            font-size: 1rem;
+            font-weight: bold;
+            cursor: pointer;
+            transition: opacity 0.2s;
+        }
+        button:disabled {
+            opacity: 0.4;
+            cursor: not-allowed;
+        }
+        button:active:not(:disabled) { opacity: 0.8; }
+        .telemetry-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+            margin-top: 15px;
+        }
+        .data-box {
+            background: #21262d;
+            padding: 10px;
+            border-radius: 6px;
+        }
+        .value {
+            font-size: 1.8rem;
+            font-weight: bold;
+            color: #ffffff;
+        }
+        #auth-overlay, #permission-overlay {
+            position: fixed;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(13, 17, 23, 0.98);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+            padding: 20px;
+            box-sizing: border-box;
+        }
+        #permission-overlay {
+            background: rgba(13, 17, 23, 0.95);
+            z-index: 999;
+        }
+        .btn-large {
+            padding: 20px 40px;
+            font-size: 1.3rem;
+        }
+        .hidden { display: none !important; }
+        .error-msg { color: var(--danger-color); font-size: 0.9rem; margin-top: 5px; }
+    </style>
+</head>
+<body>
+
+<!-- Step 1: Secure Firebase Frontend Client Authentication Screen -->
+<div id="auth-overlay">
+    <h2>Swarm Control Authentication</h2>
+    <p style="color: #8b949e; margin-bottom: 20px;">Operator secure sign-in required</p>
+    <div class="input-group" style="width: 100%; max-width: 320px;">
+        <input type="email" id="auth-email" placeholder="Operator Email" required>
+        <input type="password" id="auth-pass" placeholder="Operator Password" required>
+        <button id="auth-btn">Sign In</button>
+        <div id="auth-error" class="error-msg"></div>
+    </div>
+</div>
+
+<!-- Step 2: Gyroscope Device Handshake Permission Request -->
+<div id="permission-overlay" class="hidden">
+    <h2>Hardware Access Required</h2>
+    <p>Tap below to authorize high-speed mobile orientation streams.</p>
+    <button class="btn-large" id="permission-btn">Authorize Sensors</button>
+</div>
+
+<!-- Main Controller Deck View -->
+<div class="container">
+    <h1>Swarm Driver Hub</h1>
+    <p id="operator-badge" style="font-size: 0.85rem; color: #8b949e; margin: 0;">Operator: Authenticating...</p>
+    
+    <div class="status-card">
+        <div class="input-group">
+            <div class="row-group">
+                <input type="number" id="robot-id" placeholder="Robot ID (1-50)" min="1" max="50" style="width: 40%;">
+                <button id="fetch-bot-btn" style="width: 60%;">Verify Assignment</button>
+            </div>
+            <div class="row-group">
+                <input type="text" id="target-ip" value="192.168.4.1" placeholder="Robot Gateway IP" style="width: 60%;">
+                <button id="connect-btn" disabled style="width: 40%;">Connect</button>
+            </div>
+        </div>
+        <div id="connection-status" style="font-weight: bold; color: var(--danger-color);">Status: Disconnected</div>
+    </div>
+
+    <div class="status-card">
+        <h3>Live Telemetry Feed</h3>
+        <div class="telemetry-grid">
+            <div class="data-box">
+                <div class="label">X (Roll / Turn)</div>
+                <div id="val-x" class="value">0</div>
+            </div>
+            <div class="data-box">
+                <div class="label">Y (Pitch / Speed)</div>
+                <div id="val-y" class="value">0</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Load Client Firebase Authentication Layer Core modules -->
+<script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+    import { getAuth, signInWithEmailAndPassword, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
+
+    // 1. CONFIGURATION POOL WRAPPERS FOR CLIENT SESSIONS
+    // Fill configuration attributes matching your Firebase project profile settings.
+    const firebaseConfig = {
+        apiKey: "__VITE_FIREBASE_API_KEY__",
+        authDomain: "__VITE_FIREBASE_AUTH_DOMAIN__",
+        projectId: "__VITE_FIREBASE_PROJECT_ID__",
+        storageBucket: "__VITE_FIREBASE_STORAGE_BUCKET__",
+        messagingSenderId: "__VITE_FIREBASE_MESSAGING_SENDER_ID__",
+        appId: "__VITE_FIREBASE_APP_ID__"
+    };
+
+    // Dedicated backend api server routing base URL configuration
+    const BACKEND_API_URL = "https://your-deployed-auth-backend.com"; 
+
+    // Initialize Services
+    const app = initializeApp(firebaseConfig);
+    const auth = getAuth(app);
+
+    // Runtime variables
+    let ws = null;
+    let gyroX = 0;
+    let gyroY = 0;
+    let assignedGroup = null;
+
+    // Cache Elements
+    const authOverlay = document.getElementById('auth-overlay');
+    const permissionOverlay = document.getElementById('permission-overlay');
+    const authBtn = document.getElementById('auth-btn');
+    const authError = document.getElementById('auth-error');
+    const permissionBtn = document.getElementById('permission-btn');
+    const connectBtn = document.getElementById('connect-btn');
+    const fetchBotBtn = document.getElementById('fetch-bot-btn');
+    const statusDiv = document.getElementById('connection-status');
+    const targetIpField = document.getElementById('target-ip');
+    const robotIdField = document.getElementById('robot-id');
+
+    // ==========================================
+    // 2. INITIAL USER CLIENT AUTH FLOW
+    // ==========================================
+    authBtn.addEventListener('click', async () => {
+        const email = document.getElementById('auth-email').value.trim();
+        const pass = document.getElementById('auth-pass').value.trim();
+        authError.innerText = "";
+        
+        try {
+            await signInWithEmailAndPassword(auth, email, pass);
+        } catch (error) {
+            authError.innerText = error.message.replace("Firebase: ", "");
+        }
+    });
+
+    onAuthStateChanged(auth, (user) => {
+        if (user) {
+            authOverlay.classList.add('hidden');
+            permissionOverlay.classList.remove('hidden');
+            document.getElementById('operator-badge').innerText = `Operator: ${user.email}`;
+        } else {
+            authOverlay.classList.remove('hidden');
+        }
+    });
+
+    // ==========================================
+    // 3. HARDWARE GYROSCOPE STREAM ACCESS
+    // ==========================================
+    permissionBtn.addEventListener('click', () => {
+        if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+            DeviceOrientationEvent.requestPermission()
+                .then(response => {
+                    if (response === 'granted') {
+                        initGyroscopeTracking();
+                    } else {
+                        alert('Orientation data access denied.');
+                    }
+                }).catch(console.error);
+        } else {
+            initGyroscopeTracking();
+        }
+    });
+
+    function initGyroscopeTracking() {
+        window.addEventListener('deviceorientation', (event) => {
+            // Mapping orientation values cleanly to bounds scale parameters [-100, 100]
+            gyroX = Math.max(-100, Math.min(100, Math.round(event.gamma || 0)));
+            gyroY = Math.max(-100, Math.min(100, Math.round(event.beta || 0)));
+            document.getElementById('val-x').innerText = gyroX;
+            document.getElementById('val-y').innerText = gyroY;
+        });
+        permissionOverlay.classList.add('hidden');
+    }
+
+    // ==========================================
+    // 4. SECURE PROXY SERVER PROFILE ROUTING
+    // ==========================================
+    fetchBotBtn.addEventListener('click', async () => {
+        const botId = robotIdField.value.trim();
+        if (!botId || botId < 1 || botId > 50) {
+            alert("Please input a valid Robot ID (1-50)");
+            return;
+        }
+
+        statusDiv.innerText = `Status: Sending Identity Handshake to Authentication Server...`;
+        statusDiv.style.color = "var(--accent-color)";
+
+        try {
+            const currentUser = auth.currentUser;
+            if (!currentUser) {
+                alert("Session Expired: Please authenticate driver profile again.");
+                window.location.reload();
+                return;
+            }
+            
+            // Extract temporary JSON identity token string key reference
+            const idToken = await currentUser.getIdToken(true);
+
+            // Execute request dispatching to Backend Node Microservice pipeline target
+            const response = await fetch(`${BACKEND_API_URL}/api/swarm/route-robot`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${idToken}`
+                },
+                body: JSON.stringify({ robotId: parseInt(botId) })
+            });
+
+            const data = await response.json();
+
+            if (response.ok) {
+                assignedGroup = data.group;
+                statusDiv.innerText = `Token verified! Group ${assignedGroup} identified. Ready to link hardware.`;
+                statusDiv.style.color = "var(--success-color)";
+                connectBtn.disabled = false;
+            } else {
+                statusDiv.innerText = `Authentication Rejection: ${data.error}`;
+                statusDiv.style.color = "var(--danger-color)";
+                connectBtn.disabled = true;
+            }
+        } catch (error) {
+            statusDiv.innerText = "Network Error: Failed to reach the backend service hub.";
+            statusDiv.style.color = "var(--danger-color)";
+            console.error(error);
+        }
+    });
+
+    // ==========================================
+    // 5. HIGH-SPEED DIRECT BINARY STREAM (30Hz)
+    // ==========================================
+    window.toggleConnection = function() {
+        if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.close();
+            return;
+        }
+
+        let ip = targetIpField.value.trim();
+        statusDiv.innerText = "Status: Connecting to target hardware socket port...";
+        statusDiv.style.color = "var(--accent-color)";
+
+        // Establish connection to local hardware network access layer gateway
+        ws = new WebSocket(`ws://${ip}:81`);
+        ws.binaryType = "arraybuffer";
+
+        ws.onopen = () => {
+            statusDiv.innerText = `Control Active -> Streaming to Group ${assignedGroup}`;
+            statusDiv.style.color = "var(--success-color)";
+            connectBtn.innerText = "Disconnect";
+            robotIdField.disabled = true;
+            fetchBotBtn.disabled = true;
+        };
+
+        ws.onclose = () => {
+            statusDiv.innerText = "Status: Disconnected";
+            statusDiv.style.color = "var(--danger-color)";
+            connectBtn.innerText = "Connect";
+            robotIdField.disabled = false;
+            fetchBotBtn.disabled = false;
+        };
+    };
+
+    connectBtn.addEventListener('click', window.toggleConnection);
+
+    // Continuous marshalling structure loop to dump high speed raw Int8 values
+    setInterval(() => {
+        if (ws && ws.readyState === WebSocket.OPEN) {
+            const buffer = new ArrayBuffer(2);
+            const view = new Int8Array(buffer);
+            view[0] = gyroX; 
+            view[1] = gyroY; 
+            ws.send(buffer);
+        }
+    }, 35);
+</script>
+</body>
+</html>
