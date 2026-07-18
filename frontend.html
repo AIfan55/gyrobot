@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Swarm Control Deck - Proxy Auth Mode</title>
+    <title>Swarm Control Hub</title>
     <style>
         :root {
             --bg-color: #0d1117;
@@ -115,35 +115,35 @@
 </head>
 <body>
 
-<!-- Step 1: Secure Firebase Frontend Client Authentication Screen -->
+<!-- Step 1: Secure Operator Credentials Entry -->
 <div id="auth-overlay">
-    <h2>Swarm Control Authentication</h2>
-    <p style="color: #8b949e; margin-bottom: 20px;">Operator secure sign-in required</p>
+    <h2>Swarm Core Sign In</h2>
+    <p style="color: #8b949e; margin-bottom: 20px;">Input allocated operator identifier credentials</p>
     <div class="input-group" style="width: 100%; max-width: 320px;">
-        <input type="email" id="auth-email" placeholder="Operator Email" required>
-        <input type="password" id="auth-pass" placeholder="Operator Password" required>
-        <button id="auth-btn">Sign In</button>
+        <input type="email" id="auth-email" placeholder="operator01@swarm.local" required>
+        <input type="password" id="auth-pass" placeholder="Password" required>
+        <button id="auth-btn">Authenticate Driver</button>
         <div id="auth-error" class="error-msg"></div>
     </div>
 </div>
 
-<!-- Step 2: Gyroscope Device Handshake Permission Request -->
+<!-- Step 2: Viewport Interaction Triggering Gyro Access -->
 <div id="permission-overlay" class="hidden">
     <h2>Hardware Access Required</h2>
     <p>Tap below to authorize high-speed mobile orientation streams.</p>
     <button class="btn-large" id="permission-btn">Authorize Sensors</button>
 </div>
 
-<!-- Main Controller Deck View -->
+<!-- Controller Interface HUD Layout -->
 <div class="container">
     <h1>Swarm Driver Hub</h1>
-    <p id="operator-badge" style="font-size: 0.85rem; color: #8b949e; margin: 0;">Operator: Authenticating...</p>
+    <p id="operator-badge" style="font-size: 0.85rem; color: #8b949e; margin: 0;">Operator: Unverified</p>
     
     <div class="status-card">
         <div class="input-group">
             <div class="row-group">
                 <input type="number" id="robot-id" placeholder="Robot ID (1-50)" min="1" max="50" style="width: 40%;">
-                <button id="fetch-bot-btn" style="width: 60%;">Verify Assignment</button>
+                <button id="fetch-bot-btn">Verify Target</button>
             </div>
             <div class="row-group">
                 <input type="text" id="target-ip" value="192.168.4.1" placeholder="Robot Gateway IP" style="width: 60%;">
@@ -168,36 +168,17 @@
     </div>
 </div>
 
-<!-- Load Client Firebase Authentication Layer Core modules -->
-<script type="module">
-    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
-    import { getAuth, signInWithEmailAndPassword, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
+<script>
+    // CRITICAL: Point this to your actual deployed Render Web Service address URL
+    const BACKEND_API_URL = "https://your-auth-backend.onrender.com"; 
 
-    // 1. CONFIGURATION POOL WRAPPERS FOR CLIENT SESSIONS
-    // Fill configuration attributes matching your Firebase project profile settings.
-    const firebaseConfig = {
-        apiKey: "__VITE_FIREBASE_API_KEY__",
-        authDomain: "__VITE_FIREBASE_AUTH_DOMAIN__",
-        projectId: "__VITE_FIREBASE_PROJECT_ID__",
-        storageBucket: "__VITE_FIREBASE_STORAGE_BUCKET__",
-        messagingSenderId: "__VITE_FIREBASE_MESSAGING_SENDER_ID__",
-        appId: "__VITE_FIREBASE_APP_ID__"
-    };
-
-    // Dedicated backend api server routing base URL configuration
-    const BACKEND_API_URL = "https://your-deployed-auth-backend.com"; 
-
-    // Initialize Services
-    const app = initializeApp(firebaseConfig);
-    const auth = getAuth(app);
-
-    // Runtime variables
+    let sessionToken = null;
     let ws = null;
     let gyroX = 0;
     let gyroY = 0;
     let assignedGroup = null;
 
-    // Cache Elements
+    // Element Registry Cache
     const authOverlay = document.getElementById('auth-overlay');
     const permissionOverlay = document.getElementById('permission-overlay');
     const authBtn = document.getElementById('auth-btn');
@@ -210,7 +191,7 @@
     const robotIdField = document.getElementById('robot-id');
 
     // ==========================================
-    // 2. INITIAL USER CLIENT AUTH FLOW
+    // 1. BACKEND SIGN-IN INTERACTION HANDLING
     // ==========================================
     authBtn.addEventListener('click', async () => {
         const email = document.getElementById('auth-email').value.trim();
@@ -218,45 +199,50 @@
         authError.innerText = "";
         
         try {
-            await signInWithEmailAndPassword(auth, email, pass);
-        } catch (error) {
-            authError.innerText = error.message.replace("Firebase: ", "");
-        }
-    });
-
-    onAuthStateChanged(auth, (user) => {
-        if (user) {
-            authOverlay.classList.add('hidden');
-            permissionOverlay.classList.remove('hidden');
-            document.getElementById('operator-badge').innerText = `Operator: ${user.email}`;
-        } else {
-            authOverlay.classList.remove('hidden');
+            const res = await fetch(`${BACKEND_API_URL}/api/auth/login`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ email, password: pass })
+            });
+            const data = await res.json();
+            
+            if (res.ok) {
+                sessionToken = data.token;
+                authOverlay.classList.add('hidden');
+                permissionOverlay.classList.remove('hidden');
+                document.getElementById('operator-badge').innerText = `Operator: ${email}`;
+            } else {
+                authError.innerText = data.error || "Authentication structural error.";
+            }
+        } catch (err) {
+            authError.innerText = "Fatal: Backend server could not be reached.";
         }
     });
 
     // ==========================================
-    // 3. HARDWARE GYROSCOPE STREAM ACCESS
+    // 2. GYROSCOPE PERMISSION & EVENT LISTENING
     // ==========================================
     permissionBtn.addEventListener('click', () => {
         if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
             DeviceOrientationEvent.requestPermission()
                 .then(response => {
                     if (response === 'granted') {
-                        initGyroscopeTracking();
+                        initGyroTracking();
                     } else {
                         alert('Orientation data access denied.');
                     }
                 }).catch(console.error);
         } else {
-            initGyroscopeTracking();
+            initGyroTracking();
         }
     });
 
-    function initGyroscopeTracking() {
+    function initGyroTracking() {
         window.addEventListener('deviceorientation', (event) => {
-            // Mapping orientation values cleanly to bounds scale parameters [-100, 100]
+            // Mapping parameters cleanly to integer bounds constraints [-100, 100]
             gyroX = Math.max(-100, Math.min(100, Math.round(event.gamma || 0)));
             gyroY = Math.max(-100, Math.min(100, Math.round(event.beta || 0)));
+            
             document.getElementById('val-x').innerText = gyroX;
             document.getElementById('val-y').innerText = gyroY;
         });
@@ -264,77 +250,62 @@
     }
 
     // ==========================================
-    // 4. SECURE PROXY SERVER PROFILE ROUTING
+    // 3. RETRIEVE CHANNELS / GROUP MAPPING CONFIG
     // ==========================================
     fetchBotBtn.addEventListener('click', async () => {
         const botId = robotIdField.value.trim();
         if (!botId || botId < 1 || botId > 50) {
-            alert("Please input a valid Robot ID (1-50)");
+            alert("Input a valid numerical target index (1-50)");
             return;
         }
 
-        statusDiv.innerText = `Status: Sending Identity Handshake to Authentication Server...`;
+        statusDiv.innerText = `Status: Interrogating Render routing matrix...`;
         statusDiv.style.color = "var(--accent-color)";
 
         try {
-            const currentUser = auth.currentUser;
-            if (!currentUser) {
-                alert("Session Expired: Please authenticate driver profile again.");
-                window.location.reload();
-                return;
-            }
-            
-            // Extract temporary JSON identity token string key reference
-            const idToken = await currentUser.getIdToken(true);
-
-            // Execute request dispatching to Backend Node Microservice pipeline target
-            const response = await fetch(`${BACKEND_API_URL}/api/swarm/route-robot`, {
+            const res = await fetch(`${BACKEND_API_URL}/api/swarm/route-robot`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${idToken}`
+                    'Authorization': `Bearer ${sessionToken}`
                 },
                 body: JSON.stringify({ robotId: parseInt(botId) })
             });
-
-            const data = await response.json();
-
-            if (response.ok) {
+            const data = await res.json();
+            
+            if (res.ok) {
                 assignedGroup = data.group;
-                statusDiv.innerText = `Token verified! Group ${assignedGroup} identified. Ready to link hardware.`;
+                statusDiv.innerText = `Verified: Target uses Group ${data.group} (Ch ${data.channel}). Ready to link.`;
                 statusDiv.style.color = "var(--success-color)";
                 connectBtn.disabled = false;
             } else {
-                statusDiv.innerText = `Authentication Rejection: ${data.error}`;
+                statusDiv.innerText = `Rejection: ${data.error}`;
                 statusDiv.style.color = "var(--danger-color)";
-                connectBtn.disabled = true;
             }
-        } catch (error) {
-            statusDiv.innerText = "Network Error: Failed to reach the backend service hub.";
+        } catch (err) {
+            statusDiv.innerText = "Error contacting allocation hub endpoint.";
             statusDiv.style.color = "var(--danger-color)";
-            console.error(error);
         }
     });
 
     // ==========================================
-    // 5. HIGH-SPEED DIRECT BINARY STREAM (30Hz)
+    // 4. DUAL-BYTE HIGH SPEED LOCAL STREAM BINARY
     // ==========================================
-    window.toggleConnection = function() {
+    function toggleConnection() {
         if (ws && ws.readyState === WebSocket.OPEN) {
             ws.close();
             return;
         }
 
         let ip = targetIpField.value.trim();
-        statusDiv.innerText = "Status: Connecting to target hardware socket port...";
+        statusDiv.innerText = "Status: Spawning hardware WebSocket stream...";
         statusDiv.style.color = "var(--accent-color)";
 
-        // Establish connection to local hardware network access layer gateway
         ws = new WebSocket(`ws://${ip}:81`);
         ws.binaryType = "arraybuffer";
 
         ws.onopen = () => {
-            statusDiv.innerText = `Control Active -> Streaming to Group ${assignedGroup}`;
+            statusDiv.innerText = `Control Pipeline Binding Active (Group ${assignedGroup})`;
             statusDiv.style.color = "var(--success-color)";
             connectBtn.innerText = "Disconnect";
             robotIdField.disabled = true;
@@ -348,17 +319,17 @@
             robotIdField.disabled = false;
             fetchBotBtn.disabled = false;
         };
-    };
+    }
 
-    connectBtn.addEventListener('click', window.toggleConnection);
+    connectBtn.addEventListener('click', toggleConnection);
 
-    // Continuous marshalling structure loop to dump high speed raw Int8 values
+    // Continuous payload marshalling loop firing at roughly ~30Hz intervals
     setInterval(() => {
         if (ws && ws.readyState === WebSocket.OPEN) {
             const buffer = new ArrayBuffer(2);
             const view = new Int8Array(buffer);
-            view[0] = gyroX; 
-            view[1] = gyroY; 
+            view[0] = gyroX; // Byte 0: Steering Turn Vector
+            view[1] = gyroY; // Byte 1: Speed Throttle Vector
             ws.send(buffer);
         }
     }, 35);
